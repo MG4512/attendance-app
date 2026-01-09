@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Attendance Tracker 2026</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; background: #f9f9f9; }
+    h1 { text-align: center; color: #2c3e50; }
+    .container { max-width: 95%; margin: auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    input, button, select { padding: 6px; margin: 4px; }
+    .notice { color:#2c3e50; font-size:12px; margin-top:6px; min-height: 18px; }
+    .table-container {
+      overflow-x: auto;
+      margin-top: 16px;
+      border: 1px solid #ccc;
+      border-radius:6px;
+      max-width: 100%;
+      padding-bottom: 12px; /* space for horizontal scrollbar */
+      background: #fff;
+    }
+    table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 11px; }
+    th, td { border: 1px solid #ccc; padding: 4px; text-align: center; white-space: nowrap; background: #fff; }
+    th { background: #34495e; color: #fff; position: sticky; top: 0; z-index: 3; }
+    th:first-child, td:first-child {
+      position: sticky;
+      left: 0;
+      background: #fff;
+      z-index: 2;
+      box-shadow: 2px 0 0 rgba(0,0,0,0.08);
+    }
+    .status-present { background: #2ecc71; color: #fff; }
+    .status-absent  { background: #e74c3c; color: #fff; }
+    .status-leave   { background: #e67e22; color: #fff; }
+    .summary { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Attendance Tracker – Year 2026</h1>
+
+    <!-- Add Employee -->
+    <div>
+      <input type="text" id="employeeName" placeholder="Enter employee name" />
+      <button id="addBtn" type="button">Add Employee</button>
+      <div class="notice" id="addNotice"></div>
+    </div>
+
+    <!-- Delete Employee -->
+    <div>
+      <label for="deleteSelect">Delete Employee:</label>
+      <select id="deleteSelect"></select>
+      <button id="deleteBtn" type="button">Delete</button>
+    </div>
+
+    <!-- Month Selector + Export/Import -->
+    <div>
+      <label for="monthSelect">Select Month:</label>
+      <select id="monthSelect">
+        <option value="0">January</option>
+        <option value="1">February</option>
+        <option value="2">March</option>
+        <option value="3">April</option>
+        <option value="4">May</option>
+        <option value="5">June</option>
+        <option value="6">July</option>
+        <option value="7">August</option>
+        <option value="8">September</option>
+        <option value="9">October</option>
+        <option value="10">November</option>
+        <option value="11">December</option>
+      </select>
+      <button id="exportBtn" type="button">Export to Excel</button>
+      <input type="file" id="importFile" accept=".xlsx" />
+    </div>
+
+    <!-- Month Table -->
+    <div id="monthSection">
+      <h2 id="monthTitle"></h2>
+      <div class="table-container">
+        <table id="attendanceTable">
+          <thead><tr id="tableHeadRow"><th>Employee</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Summary -->
+    <div class="summary" id="summary"></div>
+  </div>
+
+  <script>
+    const year = 2026;
+    const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+    const daysInMonth = [31,28,31,30,31,30,31,31,30,31,30,31];
+    if ((year % 4 === 0 && year % 100 !== 0) || year % 400 === 0) daysInMonth[1] = 29;
+
+    function safeParse(key, fallback) {
+      try { const raw = localStorage.getItem(key); return raw ? JSON.parse(raw) : fallback; }
+      catch { return fallback; }
+    }
+
+    let employees = safeParse("employees", []);
+    // attendance structure: attendance[emp][dayKey] = { status: string, timestamp: number }
+    let attendance = safeParse("attendance", {});
+
+    function getStatusClass(val) {
+      if (val === "Present") return "status-present";
+      if (val === "Absent") return "status-absent";
+      if (["CL","SL","OL"].includes(val)) return "status-leave";
+      return "";
+    }
+
+    function updateDeleteDropdown() {
+      const deleteSelect = document.getElementById("deleteSelect");
+      deleteSelect.innerHTML = "";
+      employees.forEach(emp => {
+        const option = document.createElement("option");
+        option.value = emp;
+        option.textContent = emp;
+        deleteSelect.appendChild(option);
+      });
+    }
+
+    function addEmployee() {
+      const input = document.getElementById("employeeName");
+      const addNotice = document.getElementById("addNotice");
+      const name = input.value.trim();
+      if (!name) { addNotice.textContent = "Please enter a valid employee name."; return; }
+      const normalized = name.replace(/\s+/g, " ");
+      if (employees.some(e => e.toLowerCase() === normalized.toLowerCase())) {
+        addNotice.textContent = "Employee already exists."; return;
+      }
+      employees.push(normalized);
+      attendance[normalized] = attendance[normalized] || {};
+      localStorage.setItem("employees", JSON.stringify(employees));
+      localStorage.setItem("attendance", JSON.stringify(attendance));
+      addNotice.textContent = `Added: ${normalized}`;
+      input.value = "";
+      updateDeleteDropdown();
+      renderMonth(parseInt(document.getElementById("monthSelect").value, 10));
+      renderSummary();
+    }
+
+    function deleteEmployee() {
+      const deleteSelect = document.getElementById("deleteSelect");
+      const emp = deleteSelect.value;
+      if (!emp) return;
+      if (!confirm(`Are you sure you want to delete ${emp}?`)) return;
+      employees = employees.filter(e => e !== emp);
+      delete attendance[emp];
+      localStorage.setItem("employees", JSON.stringify(employees));
+      localStorage.setItem("attendance", JSON.stringify(attendance));
+      updateDeleteDropdown();
+      renderMonth(parseInt(document.getElementById("monthSelect").value, 10));
+      renderSummary();
+    }
+
+    function setAttendance(name, dayKey, value) {
+      if (!attendance[name]) attendance[name] = {};
+      if (value === "") {
+        delete attendance[name][dayKey];
+      } else {
+        attendance[name][dayKey] = { status: value, timestamp: Date.now() };
+      }
+      localStorage.setItem("attendance", JSON.stringify(attendance));
+      renderMonth(parseInt(document.getElementById("monthSelect").value, 10));
+      renderSummary();
+    }
+
+    function renderMonth(monthIndex) {
+      document.getElementById("monthTitle").textContent = `${months[monthIndex]} ${year}`;
+      const tableHeadRow = document.getElementById("tableHeadRow");
+      tableHeadRow.innerHTML = "<th>Employee</th>";
+      for (let d = 1; d <= daysInMonth[monthIndex]; d++) {
+        const th = document.createElement("th");
+        th.textContent = `${d} ${months[monthIndex]} ${year}`;
+        tableHeadRow.appendChild(th);
+      }
+
+      const tbody = document.querySelector("#attendanceTable tbody");
+      tbody.innerHTML = "";
+      employees.forEach(emp => {
+        const tr = document.createElement("tr");
+        const nameCell = document.createElement("td");
+        nameCell.textContent = emp;
+        tr.appendChild(nameCell);
+
+        for (let d = 1; d <= daysInMonth[monthIndex]; d++) {
+          const dayKey = `${d}-${months[monthIndex]}-${year}`;
+          const record = attendance[emp]?.[dayKey] || {};
+          const status = record.status || "";
+          const timestamp = record.timestamp || null;
+
+          const td = document.createElement("td");
+          td.className = getStatusClass(status);
+
+          const select = document.createElement("select");
+          ["","Present","Absent","CL","SL","OL"].forEach(opt => {
+            const option = document.createElement("option");
+            option.value = opt;
+            option.textContent = opt === "" ? "--" : opt;
+            if (status === opt) option.selected = true;
+            select.appendChild(option);
+          });
+
+          const locked = timestamp && (Date.now() - timestamp > 24 * 60 * 60 * 1000);
+          if (locked) {
+            select.disabled = true;
+            select.title = "Locked after 24 hours";
+          } else {
+            select.addEventListener("change", e => setAttendance(emp, dayKey, e.target.value));
+          }
+
+          td.appendChild(select);
+          tr.appendChild(td);
+        }
+        tbody.appendChild(tr);
+      });
+    }
+
+    function renderSummary() {
+      const summaryDiv = document.getElementById("summary");
+      let summaryHTML = `
+        <h3>Summary</h3>
+        <table style="border-collapse: collapse; width: 100%; margin-top: 10px; font-size: 13px;">
+          <thead>
+            <tr style="background:#2c3e50; color:#fff;">
+              <th>Employee</th><th>Present</th><th>CL</th><th>SL</th><th>OL</th><th>Absent</th>
+            </tr>
+          </thead><tbody>`;
+      employees.forEach(emp => {
+        let present=0, cl=0, sl=0, ol=0, absent=0;
+        for (let m=0;m<12;m++) {
+          for (let d=1;d<=daysInMonth[m];d++) {
+            const dayKey = `${d}-${months[m]}-${year}`;
+            const status = attendance[emp]?.[dayKey]?.status;
+            if (status==="Present") present++;
+            else if (status==="CL") cl++;
+            else if (status==="SL") sl++;
+            else if (status==="OL") ol++;
+            else if (status==="Absent") absent++;
+          }
+        }
+        summaryHTML += `
+          <tr>
+            <td style="border:1px solid #ccc; padding:6px; font-weight:bold;">${emp}</td>
+            <td style="border:1px solid #ccc; padding:6px; color:green;">${present}</td>
+            <td style="border:1px solid #ccc; padding:6px; color:#e67e22;">${cl}</td>
+            <td style="border:1px solid #ccc; padding:6px; color:#e67e22;">${sl}</td>
+            <td style="border:1px solid #ccc; padding:6px; color:#e67e22;">${ol}</td>
+            <td style="border:1px solid #ccc; padding:6px; color:red;">${absent}</td>
+          </tr>`;
+      });
+      summaryHTML += `</tbody></table>`;
+      summaryDiv.innerHTML = summaryHTML;
+    }
+
+    function exportToExcel() {
+      const header = ["Employee"];
+      for (let m=0;m<12;m++) {
+        for (let d=1;d<=daysInMonth[m];d++) {
+          header.push(`${d}-${months[m]}-${year}`);
+        }
+      }
+      const rows = [header];
+      employees.forEach(emp => {
+        const row = [emp];
+        for (let m=0;m<12;m++) {
+          for (let d=1;d<=daysInMonth[m];d++) {
+            const dayKey = `${d}-${months[m]}-${year}`;
+            const status = attendance[emp]?.[dayKey]?.status || "";
+            row.push(status);
+          }
+        }
+        rows.push(row);
+      });
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(rows);
+      XLSX.utils.book_append_sheet(wb, ws, "Attendance 2026");
+      XLSX.writeFile(wb, "Attendance_2026.xlsx");
+    }
+
+    function importFromExcel(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        const data = new Uint8Array(e.target.result);
+        const workbook = XLSX.read(data, { type: "array" });
+        const sheetName = workbook.SheetNames[0];
+        const worksheet = workbook.Sheets[sheetName];
+        const rows = XLSX.utils.sheet_to_json(worksheet, { header: 1 });
+
+        if (!rows || rows.length < 2) {
+          alert("The file appears to be empty or malformed.");
+          event.target.value = "";
+          return;
+        }
+
+        const header = rows[0].map((cell, idx) => idx === 0 ? "Employee" : (cell || "").toString().trim());
+        const newEmployees = [];
+        const newAttendance = {};
+
+        for (let i=1;i<rows.length;i++) {
+          const row = rows[i];
+          const emp = (row[0] || "").toString().trim();
+          if (!emp) continue;
+          newEmployees.push(emp);
+          newAttendance[emp] = {};
+          for (let j=1;j<header.length;j++) {
+            const dayKey = header[j];
+            const raw = row[j];
+            const status = (raw == null ? "" : raw).toString().trim();
+            if (dayKey && status) {
+              // Import status; set timestamp to now so it’s editable for 24 hours
+              newAttendance[emp][dayKey] = { status, timestamp: Date.now() };
+            }
+          }
+        }
+
+        employees = newEmployees;
+        attendance = newAttendance;
+        localStorage.setItem("employees", JSON.stringify(employees));
+        localStorage.setItem("attendance", JSON.stringify(attendance));
+
+        const monthSelect = document.getElementById("monthSelect");
+        renderMonth(parseInt(monthSelect.value, 10));
+        renderSummary();
+        alert("Data imported successfully!");
+        event.target.value = "";
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      const addBtn = document.getElementById("addBtn");
+      const deleteBtn = document.getElementById("deleteBtn");
+      const monthSelect = document.getElementById("monthSelect");
+      const exportBtn = document.getElementById("exportBtn");
+      const importFile = document.getElementById("importFile");
+
+      addBtn.addEventListener("click", addEmployee);
+      deleteBtn.addEventListener("click", deleteEmployee);
+      monthSelect.addEventListener("change", () => renderMonth(parseInt(monthSelect.value, 10)));
+      exportBtn.addEventListener("click", exportToExcel);
+      importFile.addEventListener("click", importFromExcel);
+
+      updateDeleteDropdown();
+      if (!monthSelect.value) monthSelect.value = "0";
+      renderMonth(parseInt(monthSelect.value, 10));
+      renderSummary();
+    });
+  </script>
+</body>
+</html>
